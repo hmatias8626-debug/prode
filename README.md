@@ -1,23 +1,32 @@
-# Prode Mundial - Cruces + Probabilidades
+# Prode Mundial - Cruces + Cuotas API
 
-App en Streamlit para cargar cruces del Mundial 2026 desde OpenFootball y calcular probabilidades reales desde cuotas 1X2.
+App en Streamlit para cargar cruces del Mundial 2026 desde OpenFootball y traer cuotas desde The Odds API.
 
-## Cómo correr
+## Cómo correr local
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Uso
+## Secrets en Streamlit Cloud
 
-1. Presionar **Cargar Mundial 2026 desde OpenFootball**.
-2. Completar cuotas local / empate / visitante.
-3. Revisar probabilidad, recomendación y resultado probable.
-4. Descargar Excel.
+En Streamlit Cloud ir a:
 
-## Fuente de partidos
+Settings → Secrets
 
-- OpenFootball JSON: https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json
-- Fixture oficial para validar: FIFA World Cup 2026 scores & fixtures.
+Pegar:
 
+```toml
+ODDS_API_KEY = "TU_API_KEY"
+```
+
+No subas tu API key a GitHub.
+
+## Deploy
+
+1. Crear repo en GitHub.
+2. Subir estos archivos.
+3. En Streamlit Community Cloud crear app nueva.
+4. Main file: `app.py`.
+5. Cargar el secret `ODDS_API_KEY`.
