@@ -122,3 +122,12 @@ Cambio principal:
 Estrategia recomendada:
 - Fixture: actualizar una vez y guardar.
 - Cuotas: actualizar manualmente cuando te interese.
+
+
+## v7 Tarjeta de próximo evento
+
+Agregado:
+- Tarjeta superior con próximo evento de la competencia seleccionada.
+- No consume requests.
+- Usa `df_resultado` cargado desde Supabase o actualizado manualmente.
+- Muestra fecha/hora Argentina, liga, equipos, cuotas y pronóstico si existen.
