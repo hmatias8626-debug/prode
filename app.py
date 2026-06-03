@@ -22,6 +22,7 @@ CATEGORIAS_RAPIDAS = [
 ]
 
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
+FREE_API_FOOTBALL_SEASONS = [2024, 2023, 2022]
 
 
 def get_secret(name):
@@ -69,7 +70,6 @@ def api_football_get(endpoint, params=None, timeout=30):
         raise Exception(f"Error API-Football {r.status_code}: {r.text}")
 
     data = r.json()
-
     errors = data.get("errors")
     if errors:
         raise Exception(f"API-Football respondió con error: {errors}")
@@ -99,12 +99,15 @@ def cargar_ligas_argentina_api_football():
             if year:
                 season_years.append(year)
 
+        temporadas_free = [y for y in sorted(season_years, reverse=True) if y in FREE_API_FOOTBALL_SEASONS]
+
         filas.append({
             "league_id": league.get("id"),
             "league_name": league.get("name"),
             "league_type": league.get("type"),
             "country": country.get("name"),
             "seasons": sorted(season_years, reverse=True),
+            "temporadas_free": temporadas_free,
             "ultima_temporada": max(season_years) if season_years else None,
         })
 
@@ -272,6 +275,39 @@ def eventos_outrights_a_df(eventos):
     return pd.DataFrame(filas)
 
 
+def elegir_resultado_probable(p_local, p_empate, p_visitante):
+    """
+    Heurística simple para prode.
+    No pretende simular xG real, pero evita tirar siempre 2-1.
+    """
+    if p_empate is not None and p_empate >= 0.34:
+        if p_empate >= 0.40:
+            return "0-0"
+        if abs(p_local - p_visitante) <= 0.08:
+            return "1-1"
+        return "1-1"
+
+    favorito = max(p_local, p_visitante)
+    diferencia = abs(p_local - p_visitante)
+
+    if favorito >= 0.72:
+        return "3-0" if diferencia >= 0.55 else "3-1"
+
+    if favorito >= 0.64:
+        return "2-0" if diferencia >= 0.35 else "2-1"
+
+    if favorito >= 0.56:
+        return "2-1"
+
+    if p_empate is not None and p_empate >= 0.29:
+        return "1-1"
+
+    if diferencia <= 0.10:
+        return "1-1" if p_empate is not None else "1-0"
+
+    return "1-0"
+
+
 def calcular_probabilidades_partido(row):
     try:
         cl = float(row["Cuota local"])
@@ -287,7 +323,16 @@ def calcular_probabilidades_partido(row):
             p_local = bruto_local / total
             p_empate = bruto_empate / total
             p_visitante = bruto_visitante / total
+
             opciones = {"Local": p_local, "Empate": p_empate, "Visitante": p_visitante}
+
+            # Para prode conviene permitir empate aunque no sea máximo absoluto si está muy cerca.
+            max_no_empate = max(p_local, p_visitante)
+            if p_empate >= 0.32 and (max_no_empate - p_empate) <= 0.06:
+                recomendacion = "Empate"
+            else:
+                recomendacion = max(opciones, key=opciones.get)
+
         else:
             bruto_local = 1 / cl
             bruto_visitante = 1 / cv
@@ -296,8 +341,8 @@ def calcular_probabilidades_partido(row):
             p_empate = None
             p_visitante = bruto_visitante / total
             opciones = {"Local": p_local, "Visitante": p_visitante}
+            recomendacion = max(opciones, key=opciones.get)
 
-        recomendacion = max(opciones, key=opciones.get)
         confianza = opciones[recomendacion]
 
         if recomendacion == "Local":
@@ -307,17 +352,7 @@ def calcular_probabilidades_partido(row):
         else:
             para_prode = "Empate"
 
-        if hay_empate:
-            if recomendacion == "Empate":
-                resultado = "1-1"
-            elif confianza >= 0.62:
-                resultado = "2-0"
-            elif confianza >= 0.52:
-                resultado = "2-1"
-            else:
-                resultado = "1-0"
-        else:
-            resultado = ""
+        resultado = elegir_resultado_probable(p_local, p_empate, p_visitante)
 
         riesgo = "Bajo" if confianza >= 0.58 else "Medio" if confianza >= 0.47 else "Alto"
 
@@ -350,7 +385,6 @@ def agregar_calculos(df):
     if df.empty:
         return df
 
-    # Elimina columnas calculadas previas para evitar duplicados si se recalcula.
     calculadas = [
         "Prob local %", "Prob empate %", "Prob visitante %",
         "Margen casa %", "Recomendación", "Para prode",
@@ -385,21 +419,6 @@ def excel_bytes(df_dict):
     return output.getvalue()
 
 
-def cargar_csv_excel(archivo):
-    if archivo.name.endswith(".csv"):
-        return pd.read_csv(archivo)
-    return pd.read_excel(archivo)
-
-
-def asegurar_columnas_manual(df):
-    df = df.copy()
-    necesarias = ["fecha_api", "local", "visitante", "Cuota local", "Cuota empate", "Cuota visitante"]
-    for col in necesarias:
-        if col not in df.columns:
-            df[col] = None
-    return df
-
-
 st.title("⚽ Prode Odds")
 st.caption("Botoncitos rápidos + The Odds API + Liga Argentina real con API-Football.")
 
@@ -420,8 +439,8 @@ with st.sidebar:
         st.warning("Falta API_FOOTBALL_KEY para Liga Argentina.")
 
     st.divider()
-    st.header("Secrets necesarios")
-    st.code('ODDS_API_KEY = "tu_key_the_odds_api"\nAPI_FOOTBALL_KEY = "tu_key_api_football"', language="toml")
+    st.header("API-Football Free")
+    st.info("Tu plan free permite temporadas 2022, 2023 y 2024. 2025/2026 no están disponibles en free.")
 
     st.divider()
     st.warning("Las cuotas ayudan, pero no garantizan resultados. El oráculo cobra margen y encima se lava las manos.")
@@ -460,7 +479,7 @@ with cols_arg[0]:
         st.session_state["df_resultado"] = pd.DataFrame()
 
 with cols_arg[1]:
-    st.caption("Liga Argentina usa API-Football para traer fixture real. Las cuotas se completan manualmente o con otra fuente si luego conseguimos una API de odds argentina.")
+    st.caption("Liga Argentina usa API-Football para fixture. En plan free usar temporadas 2022-2024.")
 
 st.divider()
 
@@ -528,10 +547,9 @@ if modo_actual == "api_football_argentina":
         if not df_ligas_arg.empty:
             st.subheader("Liga / torneo")
 
-            # Priorizamos Liga Profesional, pero podés elegir otra.
             liga_default = encontrar_liga_profesional(df_ligas_arg)
             opciones_ligas = {
-                f"{row['league_name']} — ID {row['league_id']} — temporadas: {row['seasons'][:5]}": int(row["league_id"])
+                f"{row['league_name']} — ID {row['league_id']} — free: {row['temporadas_free']}": int(row["league_id"])
                 for _, row in df_ligas_arg.iterrows()
             }
 
@@ -546,49 +564,56 @@ if modo_actual == "api_football_argentina":
             league_id = opciones_ligas[liga_label]
 
             fila_liga = df_ligas_arg[df_ligas_arg["league_id"] == league_id].iloc[0]
-            temporadas = fila_liga["seasons"] if isinstance(fila_liga["seasons"], list) else [date.today().year]
-            temporada_default = date.today().year if date.today().year in temporadas else temporadas[0]
+            temporadas_api = fila_liga["seasons"] if isinstance(fila_liga["seasons"], list) else FREE_API_FOOTBALL_SEASONS
+            temporadas_free = fila_liga["temporadas_free"] if isinstance(fila_liga["temporadas_free"], list) and fila_liga["temporadas_free"] else [2024, 2023, 2022]
 
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
-                season = st.selectbox("Temporada", temporadas, index=temporadas.index(temporada_default) if temporada_default in temporadas else 0)
+                season = st.selectbox("Temporada", temporadas_free, index=0)
             with col2:
-                modo_fecha = st.selectbox("Qué cargar", ["next", "last", "rango"], format_func=lambda x: {"next": "Próximos partidos", "last": "Últimos partidos", "rango": "Rango de fechas"}[x])
+                modo_fecha = st.selectbox(
+                    "Qué cargar",
+                    ["last", "rango"],
+                    format_func=lambda x: {"last": "Últimos partidos", "rango": "Rango de fechas"}[x]
+                )
             with col3:
-                st.caption("API-Football trae fixture. Las cuotas quedan editables para que puedas cargarlas si no hay odds automáticas.")
+                st.info("Free API-Football: temporadas 2022-2024. Para 2026 habría que pagar o usar otra fuente.")
 
-            if modo_fecha in ["next", "last"]:
+            if modo_fecha == "last":
                 cantidad = st.slider("Cantidad de partidos", min_value=5, max_value=50, value=20, step=5)
                 desde = hasta = None
             else:
                 colf1, colf2 = st.columns(2)
                 with colf1:
-                    desde_date = st.date_input("Desde", value=date.today())
+                    desde_date = st.date_input("Desde", value=date(int(season), 1, 1))
                 with colf2:
-                    hasta_date = st.date_input("Hasta", value=date.today() + timedelta(days=14))
+                    hasta_date = st.date_input("Hasta", value=date(int(season), 12, 31))
                 desde = desde_date.isoformat()
                 hasta = hasta_date.isoformat()
                 cantidad = 20
 
             if st.button("Cargar partidos de Liga Argentina", type="primary"):
                 try:
-                    df_fix = cargar_fixtures_api_football(
-                        league_id=league_id,
-                        season=season,
-                        modo_fecha=modo_fecha,
-                        cantidad=cantidad,
-                        desde=desde,
-                        hasta=hasta,
-                    )
-
-                    if df_fix.empty:
-                        st.warning("API-Football respondió, pero no devolvió partidos para esos filtros.")
+                    if int(season) not in FREE_API_FOOTBALL_SEASONS:
+                        st.error("Tu plan free no tiene acceso a esa temporada. Usá 2022, 2023 o 2024.")
                     else:
-                        st.session_state["df_resultado"] = agregar_calculos(df_fix)
-                        st.success(f"Partidos cargados: {len(df_fix)}")
+                        df_fix = cargar_fixtures_api_football(
+                            league_id=league_id,
+                            season=season,
+                            modo_fecha=modo_fecha,
+                            cantidad=cantidad,
+                            desde=desde,
+                            hasta=hasta,
+                        )
 
-                    headers = st.session_state.get("api_football_headers", {})
-                    st.caption(f"API-Football límite: {headers.get('requests_limit')} | restantes: {headers.get('requests_remaining')}")
+                        if df_fix.empty:
+                            st.warning("API-Football respondió, pero no devolvió partidos para esos filtros.")
+                        else:
+                            st.session_state["df_resultado"] = agregar_calculos(df_fix)
+                            st.success(f"Partidos cargados: {len(df_fix)}")
+
+                        headers = st.session_state.get("api_football_headers", {})
+                        st.caption(f"API-Football límite: {headers.get('requests_limit')} | restantes: {headers.get('requests_remaining')}")
 
                 except Exception as e:
                     st.error(str(e))
