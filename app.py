@@ -960,7 +960,7 @@ def parse_odds_api_io_odds_response(data):
     }
 
 
-def cargar_cuotas_odds_api_io_por_eventos(league_slug="", limit=20, bookmakers="Bet365,Unibet,SingBet", force_api=False):
+def cargar_cuotas_odds_api_io_por_eventos(league_slug="", limit=20, bookmakers="Bet365,888Sport IT", force_api=False):
     eventos_raw = odds_api_io_events(league_slug=league_slug, limit=limit, force_api=force_api)
     df_eventos = parse_odds_api_io_events(eventos_raw)
 
@@ -1060,7 +1060,7 @@ def filtrar_ligas_por_texto(df, texto):
     ]
 
 
-def cargar_cuotas_odds_api_io_con_status(league_slug="", limit=20, bookmakers="Bet365,Unibet,SingBet", status_filter="pending", force_api=False):
+def cargar_cuotas_odds_api_io_con_status(league_slug="", limit=20, bookmakers="Bet365,888Sport IT", status_filter="pending", force_api=False):
     """
     Igual que cargar_cuotas_odds_api_io_por_eventos, pero soporta status=pending
     para no traer partidos ya resueltos.
@@ -1114,7 +1114,7 @@ def cargar_cuotas_odds_api_io_con_status(league_slug="", limit=20, bookmakers="B
     return pd.DataFrame(filas), df_eventos, eventos_raw
 
 
-def cargar_proximo_evento_futbol_odds_api_io(bookmakers="Bet365,Unibet,SingBet", force_api=False):
+def cargar_proximo_evento_futbol_odds_api_io(bookmakers="Bet365,888Sport IT", force_api=False):
     """
     Prueba rápida: trae el próximo evento de football disponible en Odds-API.io
     y busca cuotas ML/1X2 para ese evento.
@@ -1367,6 +1367,7 @@ if modo_actual == "api_football_argentina":
                     st.error(str(e))
 
             st.subheader("Cuotas Odds-API.io para Argentina")
+            st.info("Plan free Odds-API.io: usar máximo 2 bookmakers. Permitidos detectados: Bet365,888Sport IT.")
 
             if not odds_api_io_key:
                 st.warning("Para buscar cuotas en Odds-API.io cargá ODDS_API_IO_KEY en Secrets.")
@@ -1383,7 +1384,7 @@ if modo_actual == "api_football_argentina":
                 with col_p2:
                     next_bookmakers = st.text_input(
                         "Bookmakers para prueba rápida",
-                        value="Bet365,Unibet,SingBet",
+                        value="Bet365,888Sport IT",
                         key="next_bookmakers"
                     )
 
@@ -1489,7 +1490,7 @@ if modo_actual == "api_football_argentina":
                 with col_o2:
                     limit_io = st.slider("Eventos Odds-API.io", 5, 50, 20, 5)
                 with col_o3:
-                    bookmakers_io = st.text_input("Bookmakers", value="Bet365,Unibet,SingBet")
+                    bookmakers_io = st.text_input("Bookmakers", value="Bet365,888Sport IT")
 
                 col_o4, col_o5 = st.columns([1, 2])
                 with col_o4:

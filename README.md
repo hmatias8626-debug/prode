@@ -90,3 +90,13 @@ Flujo:
 1. `/events?apiKey=...&sport=football&limit=1`
 2. `/odds?apiKey=...&eventId=...&bookmakers=...`
 3. Calcula probabilidades y muestra resultado.
+
+
+## Fix bookmakers Odds-API.io
+
+El plan free de Odds-API.io permite máximo 2 bookmakers.
+Bookmakers por defecto:
+
+```text
+Bet365,888Sport IT
+```
