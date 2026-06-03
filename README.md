@@ -100,3 +100,25 @@ Bookmakers por defecto:
 ```text
 Bet365,888Sport IT
 ```
+
+
+## v5 Próximo evento pendiente
+
+Corregido:
+- El botón de prueba rápida ahora consulta `/events` con `status=pending`.
+- Filtra fechas futuras.
+- Prueba hasta 20 eventos futuros hasta encontrar cuotas.
+- Ya no debería tomar partidos finalizados/settled.
+
+
+## v6 Modo ahorro de requests
+
+Cambio principal:
+- La app NO consulta APIs externas automáticamente.
+- Si no marcás `Forzar API / actualizar`, solo lee desde Supabase.
+- Si no hay datos guardados, muestra aviso y no gasta request.
+- Si marcás forzar, consulta API y guarda el resultado en Supabase.
+
+Estrategia recomendada:
+- Fixture: actualizar una vez y guardar.
+- Cuotas: actualizar manualmente cuando te interese.

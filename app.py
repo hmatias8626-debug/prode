@@ -1116,35 +1116,78 @@ def cargar_cuotas_odds_api_io_con_status(league_slug="", limit=20, bookmakers="B
 
 def cargar_proximo_evento_futbol_odds_api_io(bookmakers="Bet365,888Sport IT", force_api=False):
     """
-    Prueba rápida: trae el próximo evento de football disponible en Odds-API.io
-    y busca cuotas ML/1X2 para ese evento.
+    Prueba rápida: trae próximos eventos pendientes de football en Odds-API.io,
+    elige el primero con fecha futura y busca cuotas ML/1X2.
     """
-    eventos_raw = odds_api_io_events(league_slug="", limit=1, force_api=force_api)
+    cache_key = "odds_api_io_next_pending_football::100"
+
+    def fetch_events():
+        params = {
+            "apiKey": get_odds_api_io_key(),
+            "sport": "football",
+            "status": "pending",
+            "limit": 100,
+        }
+        return odds_api_io_get("/events", params=params, timeout=30)
+
+    eventos_raw, source = get_or_fetch_cache(
+        cache_key,
+        CACHE_TTL_HOURS["odds_api_io"],
+        fetch_fn=fetch_events,
+        force=force_api
+    )
+
     df_eventos = parse_odds_api_io_events(eventos_raw)
 
     if df_eventos.empty:
         return pd.DataFrame(), df_eventos, eventos_raw, None
 
-    ev = df_eventos.iloc[0]
-    event_id = ev.get("event_id")
+    df_eventos = df_eventos.copy()
 
-    if not event_id:
-        return pd.DataFrame(), df_eventos, eventos_raw, None
+    # Asegurar solo pendientes y fechas futuras.
+    if "estado" in df_eventos.columns:
+        df_eventos = df_eventos[df_eventos["estado"].astype(str).str.lower().eq("pending")]
 
-    raw_odds = odds_api_io_event_odds(event_id, bookmakers, force_api=force_api)
-    parsed = parse_odds_api_io_odds_response(raw_odds)
+    df_eventos["fecha_dt"] = pd.to_datetime(df_eventos["fecha_api"], errors="coerce", utc=True)
+    ahora = pd.Timestamp.now(tz="UTC")
+    df_eventos = df_eventos[df_eventos["fecha_dt"].notna()]
+    df_eventos = df_eventos[df_eventos["fecha_dt"] >= ahora]
+    df_eventos = df_eventos.sort_values("fecha_dt")
 
-    if not parsed:
-        return pd.DataFrame(), df_eventos, eventos_raw, raw_odds
+    if df_eventos.empty:
+        return pd.DataFrame(), pd.DataFrame(), eventos_raw, None
 
-    parsed["local"] = parsed.get("local") or ev.get("local")
-    parsed["visitante"] = parsed.get("visitante") or ev.get("visitante")
-    parsed["fecha_api"] = parsed.get("fecha_api") or ev.get("fecha_api")
-    parsed["league"] = ev.get("league")
-    parsed["league_slug"] = ev.get("league_slug")
-    parsed["estado"] = ev.get("estado")
+    # Probar varios eventos futuros hasta encontrar uno con cuotas.
+    raw_odds_ultimo = None
+    eventos_probados = []
 
-    return pd.DataFrame([parsed]), df_eventos, eventos_raw, raw_odds
+    for _, ev in df_eventos.head(20).iterrows():
+        event_id = ev.get("event_id")
+        if not event_id:
+            continue
+
+        eventos_probados.append(ev.to_dict())
+
+        try:
+            raw_odds = odds_api_io_event_odds(event_id, bookmakers, force_api=force_api)
+            raw_odds_ultimo = raw_odds
+            parsed = parse_odds_api_io_odds_response(raw_odds)
+
+            if parsed:
+                parsed["local"] = parsed.get("local") or ev.get("local")
+                parsed["visitante"] = parsed.get("visitante") or ev.get("visitante")
+                parsed["fecha_api"] = parsed.get("fecha_api") or ev.get("fecha_api")
+                parsed["league"] = ev.get("league")
+                parsed["league_slug"] = ev.get("league_slug")
+                parsed["estado"] = ev.get("estado")
+
+                return pd.DataFrame([parsed]), pd.DataFrame(eventos_probados), eventos_raw, raw_odds
+        except Exception:
+            pass
+
+    # Si ninguno tuvo cuotas, devolver los eventos futuros detectados para que se vea qué encontró.
+    return pd.DataFrame(), df_eventos.head(20), eventos_raw, raw_odds_ultimo
+
 
 st.title("⚽ Prode Odds")
 st.caption("Botoncitos rápidos + The Odds API + Liga Argentina real con API-Football.")
@@ -1388,7 +1431,7 @@ if modo_actual == "api_football_argentina":
                         key="next_bookmakers"
                     )
 
-                if st.button("⚡ Probar próximo evento de fútbol"):
+                if st.button("⚡ Probar próximo evento pendiente de fútbol"):
                     try:
                         df_next, df_next_events, raw_next_events, raw_next_odds = cargar_proximo_evento_futbol_odds_api_io(
                             bookmakers=next_bookmakers,
