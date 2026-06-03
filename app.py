@@ -4,21 +4,27 @@ import requests
 from io import BytesIO
 
 st.set_page_config(
-    page_title="Prode Odds - Multi Categoría",
+    page_title="Prode Odds",
     page_icon="⚽",
     layout="wide"
 )
 
-DEFAULT_SPORTS = [
-    "soccer_fifa_world_cup",
-    "soccer_conmebol_copa_libertadores",
-    "soccer_conmebol_copa_sudamericana",
-    "soccer_brazil_serie_b",
-    "soccer_chile_campeonato",
-    "soccer_spain_segunda_division",
-    "soccer_japan_j_league",
-    "soccer_fifa_world_cup_winner",
+CATEGORIAS_RAPIDAS = [
+    {"label": "🌎 Mundial 2026", "key": "soccer_fifa_world_cup", "modo": "h2h"},
+    {"label": "🏆 Campeón Mundial", "key": "soccer_fifa_world_cup_winner", "modo": "outrights"},
+    {"label": "🏆 Libertadores", "key": "soccer_conmebol_copa_libertadores", "modo": "h2h"},
+    {"label": "🏆 Sudamericana", "key": "soccer_conmebol_copa_sudamericana", "modo": "h2h"},
+    {"label": "🇨🇱 Chile Primera", "key": "soccer_chile_campeonato", "modo": "h2h"},
+    {"label": "🇧🇷 Brasil Serie B", "key": "soccer_brazil_serie_b", "modo": "h2h"},
+    {"label": "🇪🇸 España Segunda", "key": "soccer_spain_segunda_division", "modo": "h2h"},
+    {"label": "🇯🇵 Japón J League", "key": "soccer_japan_j_league", "modo": "h2h"},
 ]
+
+LIGA_ARGENTINA_INFO = {
+    "label": "🇦🇷 Liga Argentina",
+    "key": "NO_DISPONIBLE_THE_ODDS_API",
+    "modo": "manual",
+}
 
 
 def get_api_key():
@@ -43,8 +49,7 @@ def api_get(url, params, timeout=30):
 @st.cache_data(ttl=1800)
 def cargar_deportes(api_key):
     url = "https://api.the-odds-api.com/v4/sports/"
-    data = api_get(url, {"apiKey": api_key}, timeout=25)
-    return pd.DataFrame(data)
+    return pd.DataFrame(api_get(url, {"apiKey": api_key}, timeout=25))
 
 
 def consultar_eventos(api_key, sport_key, regions, markets):
@@ -60,9 +65,7 @@ def consultar_eventos(api_key, sport_key, regions, markets):
 
 
 def promedio(lista):
-    if not lista:
-        return None
-    return round(sum(lista) / len(lista), 2)
+    return round(sum(lista) / len(lista), 2) if lista else None
 
 
 def eventos_h2h_a_df(eventos, promediar=True):
@@ -73,10 +76,7 @@ def eventos_h2h_a_df(eventos, promediar=True):
         visitante = ev.get("away_team", "")
         fecha_iso = ev.get("commence_time", "")
 
-        cuotas_local = []
-        cuotas_empate = []
-        cuotas_visitante = []
-        casas = []
+        cuotas_local, cuotas_empate, cuotas_visitante, casas = [], [], [], []
 
         for bk in ev.get("bookmakers", []):
             for market in bk.get("markets", []):
@@ -95,7 +95,6 @@ def eventos_h2h_a_df(eventos, promediar=True):
                     cuotas_visitante.append(float(cuota_visitante))
                     casas.append(bk.get("title", ""))
 
-                    # En fútbol debería existir empate. En otros deportes puede no existir.
                     if cuota_empate:
                         cuotas_empate.append(float(cuota_empate))
 
@@ -151,7 +150,6 @@ def calcular_probabilidades_partido(row):
     try:
         cl = float(row["Cuota local"])
         cv = float(row["Cuota visitante"])
-
         hay_empate = pd.notna(row.get("Cuota empate"))
 
         if hay_empate:
@@ -160,33 +158,18 @@ def calcular_probabilidades_partido(row):
             bruto_empate = 1 / ce
             bruto_visitante = 1 / cv
             total = bruto_local + bruto_empate + bruto_visitante
-
             p_local = bruto_local / total
             p_empate = bruto_empate / total
             p_visitante = bruto_visitante / total
-
-            opciones = {
-                "Local": p_local,
-                "Empate": p_empate,
-                "Visitante": p_visitante,
-            }
-
-            margen = (total - 1) * 100
+            opciones = {"Local": p_local, "Empate": p_empate, "Visitante": p_visitante}
         else:
             bruto_local = 1 / cl
             bruto_visitante = 1 / cv
             total = bruto_local + bruto_visitante
-
             p_local = bruto_local / total
             p_empate = None
             p_visitante = bruto_visitante / total
-
-            opciones = {
-                "Local": p_local,
-                "Visitante": p_visitante,
-            }
-
-            margen = (total - 1) * 100
+            opciones = {"Local": p_local, "Visitante": p_visitante}
 
         recomendacion = max(opciones, key=opciones.get)
         confianza = opciones[recomendacion]
@@ -210,25 +193,19 @@ def calcular_probabilidades_partido(row):
         else:
             resultado = ""
 
-        if confianza >= 0.58:
-            riesgo = "Bajo"
-        elif confianza >= 0.47:
-            riesgo = "Medio"
-        else:
-            riesgo = "Alto"
+        riesgo = "Bajo" if confianza >= 0.58 else "Medio" if confianza >= 0.47 else "Alto"
 
         return pd.Series({
             "Prob local %": round(p_local * 100, 2),
             "Prob empate %": round(p_empate * 100, 2) if p_empate is not None else None,
             "Prob visitante %": round(p_visitante * 100, 2),
-            "Margen casa %": round(margen, 2),
+            "Margen casa %": round((total - 1) * 100, 2),
             "Recomendación": recomendacion,
             "Para prode": para_prode,
             "Confianza %": round(confianza * 100, 2),
             "Resultado probable": resultado,
             "Riesgo": riesgo,
         })
-
     except Exception:
         return pd.Series({
             "Prob local %": None,
@@ -246,23 +223,50 @@ def calcular_probabilidades_partido(row):
 def agregar_calculos(df):
     if df.empty:
         return df
-
     calculos = df.apply(calcular_probabilidades_partido, axis=1)
     return pd.concat([df.reset_index(drop=True), calculos.reset_index(drop=True)], axis=1)
+
+
+def preparar_outrights(df_out):
+    if df_out.empty:
+        return df_out
+
+    resumen = (
+        df_out.groupby("selección/equipo", as_index=False)
+        .agg({"Cuota": "mean", "Bookmaker": "count"})
+        .rename(columns={"Bookmaker": "Bookmakers usados"})
+    )
+    resumen["Cuota"] = resumen["Cuota"].round(2)
+    resumen["Prob implícita %"] = (100 / resumen["Cuota"]).round(2)
+    return resumen.sort_values("Cuota")
 
 
 def excel_bytes(df_dict):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for sheet, df in df_dict.items():
-            safe = sheet[:31]
-            df.to_excel(writer, index=False, sheet_name=safe)
+            df.to_excel(writer, index=False, sheet_name=sheet[:31])
     output.seek(0)
     return output.getvalue()
 
 
-st.title("⚽ Prode Odds - Multi Categoría")
-st.caption("Elegí torneo/categoría, traé cuotas desde The Odds API y armá recomendaciones para el prode.")
+def cargar_csv_excel(archivo):
+    if archivo.name.endswith(".csv"):
+        return pd.read_csv(archivo)
+    return pd.read_excel(archivo)
+
+
+def asegurar_columnas_manual(df):
+    df = df.copy()
+    necesarias = ["fecha_api", "local", "visitante", "Cuota local", "Cuota empate", "Cuota visitante"]
+    for col in necesarias:
+        if col not in df.columns:
+            df[col] = None
+    return df
+
+
+st.title("⚽ Prode Odds")
+st.caption("Botoncitos rápidos + selector avanzado + cuotas desde The Odds API.")
 
 api_key = get_api_key()
 
@@ -274,21 +278,12 @@ with st.sidebar:
         st.error("Falta ODDS_API_KEY en Secrets.")
 
     st.divider()
-    st.header("Modo")
-    modo = st.radio(
-        "Qué querés ver",
-        ["Partidos 1X2 / Ganador", "Campeón / Outrights"],
-        index=0
-    )
-
-    st.divider()
-    st.warning("Esto ayuda a decidir, pero no garantiza resultados. Las cuotas son mercado + margen de la casa.")
+    st.header("Ayuda")
+    st.info("La Liga Argentina no aparece en The Odds API. Dejé un módulo manual para cargar CSV/Excel y calcular igual.")
+    st.warning("Las cuotas ayudan, pero no garantizan resultados. El oráculo cobra margen y encima se lava las manos.")
 
 if not api_key:
     st.stop()
-
-if "df_resultado" not in st.session_state:
-    st.session_state["df_resultado"] = pd.DataFrame()
 
 if "df_deportes" not in st.session_state:
     try:
@@ -297,147 +292,180 @@ if "df_deportes" not in st.session_state:
         st.error(f"No pude cargar deportes: {e}")
         st.stop()
 
+if "df_resultado" not in st.session_state:
+    st.session_state["df_resultado"] = pd.DataFrame()
+
+if "titulo_actual" not in st.session_state:
+    st.session_state["titulo_actual"] = ""
+
+if "modo_actual" not in st.session_state:
+    st.session_state["modo_actual"] = "h2h"
+
+
 df_deportes = st.session_state["df_deportes"].copy()
 
-st.header("1) Seleccionar categoría")
+st.header("1) Elegir competencia")
 
-df_soccer = df_deportes[df_deportes["group"].astype(str).str.lower().eq("soccer")].copy()
-df_soccer = df_soccer.sort_values(["title", "key"])
+st.subheader("Accesos rápidos")
 
-col1, col2, col3 = st.columns([2, 2, 1])
+cols = st.columns(4)
+for i, cat in enumerate(CATEGORIAS_RAPIDAS):
+    with cols[i % 4]:
+        if st.button(cat["label"], use_container_width=True):
+            st.session_state["sport_key"] = cat["key"]
+            st.session_state["modo_actual"] = cat["modo"]
+            st.session_state["titulo_actual"] = cat["label"]
 
-with col1:
-    solo_favoritos = st.checkbox("Mostrar solo categorías principales", value=True)
+cols_arg = st.columns([1, 3])
+with cols_arg[0]:
+    if st.button(LIGA_ARGENTINA_INFO["label"], use_container_width=True):
+        st.session_state["sport_key"] = LIGA_ARGENTINA_INFO["key"]
+        st.session_state["modo_actual"] = "manual"
+        st.session_state["titulo_actual"] = LIGA_ARGENTINA_INFO["label"]
+        st.session_state["df_resultado"] = pd.DataFrame()
 
-with col2:
-    buscar = st.text_input("Buscar categoría", placeholder="mundial, libertadores, sudamericana, chile, brazil...")
+with cols_arg[1]:
+    st.caption("Liga Argentina: módulo manual porque no está disponible en tu lista actual de The Odds API.")
 
-with col3:
-    st.metric("Categorías Soccer", len(df_soccer))
+st.divider()
 
-df_lista = df_soccer.copy()
+with st.expander("Selector avanzado de todas las categorías"):
+    df_soccer = df_deportes[df_deportes["group"].astype(str).str.lower().eq("soccer")].copy()
+    df_soccer = df_soccer.sort_values(["title", "key"])
 
-if solo_favoritos:
-    df_lista = df_lista[df_lista["key"].isin(DEFAULT_SPORTS)]
+    buscar = st.text_input("Buscar categoría avanzada", placeholder="mundial, libertadores, chile, brazil...")
+    df_lista = df_soccer.copy()
+    if buscar:
+        b = buscar.lower().strip()
+        df_lista = df_soccer[
+            df_soccer["key"].astype(str).str.lower().str.contains(b, na=False)
+            | df_soccer["title"].astype(str).str.lower().str.contains(b, na=False)
+            | df_soccer["description"].astype(str).str.lower().str.contains(b, na=False)
+        ]
 
-if buscar:
-    b = buscar.lower().strip()
-    df_lista = df_soccer[
-        df_soccer["key"].astype(str).str.lower().str.contains(b, na=False)
-        | df_soccer["title"].astype(str).str.lower().str.contains(b, na=False)
-        | df_soccer["description"].astype(str).str.lower().str.contains(b, na=False)
-    ]
+    opciones = {
+        f"{row['title']} — {row['key']}": row["key"]
+        for _, row in df_lista.iterrows()
+    }
 
-if df_lista.empty:
-    st.warning("No encontré categorías con ese filtro.")
+    if opciones:
+        seleccion = st.selectbox("Categoría avanzada", list(opciones.keys()))
+        if st.button("Usar categoría seleccionada"):
+            key = opciones[seleccion]
+            info = df_deportes[df_deportes["key"] == key].iloc[0].to_dict()
+            st.session_state["sport_key"] = key
+            st.session_state["titulo_actual"] = seleccion
+            st.session_state["modo_actual"] = "outrights" if info.get("has_outrights") and "winner" in key else "h2h"
+
     st.dataframe(df_soccer, use_container_width=True)
-    st.stop()
 
-opciones = {
-    f"{row['title']} — {row['key']}": row["key"]
-    for _, row in df_lista.iterrows()
-}
+sport_key = st.session_state.get("sport_key", "soccer_fifa_world_cup")
+modo_actual = st.session_state.get("modo_actual", "h2h")
+titulo_actual = st.session_state.get("titulo_actual", "🌎 Mundial 2026")
 
-seleccion = st.selectbox("Categoría", list(opciones.keys()))
-sport_key = opciones[seleccion]
+st.header(f"2) Consultar: {titulo_actual}")
 
-info_categoria = df_deportes[df_deportes["key"] == sport_key].iloc[0].to_dict()
+if modo_actual == "manual":
+    st.warning("Liga Argentina no está disponible en The Odds API en tu cuenta/lista actual. Acá podés subir un CSV/Excel con partidos y cuotas.")
 
-col_info1, col_info2, col_info3 = st.columns(3)
-col_info1.info(f"Key: {sport_key}")
-col_info2.info(f"Activa: {info_categoria.get('active')}")
-col_info3.info(f"Outrights: {info_categoria.get('has_outrights')}")
+    st.write("Columnas recomendadas:")
+    st.code("fecha_api, local, visitante, Cuota local, Cuota empate, Cuota visitante")
 
-st.header("2) Consultar cuotas")
+    archivo = st.file_uploader("Subir fixture/cuotas de Liga Argentina", type=["csv", "xlsx"])
 
-if modo == "Partidos 1X2 / Ganador":
-    col_a, col_b, col_c = st.columns([2, 1, 1])
+    ejemplo = pd.DataFrame([
+        {
+            "fecha_api": "2026-06-01 20:00",
+            "local": "Boca Juniors",
+            "visitante": "River Plate",
+            "Cuota local": 2.40,
+            "Cuota empate": 3.10,
+            "Cuota visitante": 2.90,
+        }
+    ])
+    st.download_button(
+        "Descargar plantilla CSV",
+        ejemplo.to_csv(index=False).encode("utf-8-sig"),
+        "plantilla_liga_argentina.csv",
+        "text/csv",
+    )
 
-    with col_a:
-        regions = st.multiselect(
-            "Regiones",
-            ["us", "uk", "eu", "au"],
-            default=["us", "uk", "eu"]
-        )
-
-    with col_b:
-        promediar = st.checkbox("Promediar casas", value=True)
-
-    with col_c:
-        st.write("Mercado")
-        st.code("h2h")
-
-    if st.button("Actualizar partidos y cuotas", type="primary"):
+    if archivo is not None:
         try:
-            eventos = consultar_eventos(api_key, sport_key, ",".join(regions), "h2h")
-            df_partidos = eventos_h2h_a_df(eventos, promediar=promediar)
-
-            if df_partidos.empty:
-                st.warning("La API respondió, pero no encontró partidos/cuotas h2h para esta categoría.")
-                with st.expander("Ver respuesta cruda"):
-                    st.json(eventos[:3] if isinstance(eventos, list) else eventos)
-            else:
-                st.session_state["df_resultado"] = agregar_calculos(df_partidos)
-                st.success(f"Partidos cargados: {len(st.session_state['df_resultado'])}")
-
-            headers = st.session_state.get("api_headers", {})
-            st.caption(
-                f"Requests usadas: {headers.get('requests_used')} | "
-                f"Restantes: {headers.get('requests_remaining')} | "
-                f"Costo última consulta: {headers.get('requests_last')}"
-            )
-
+            df_manual = asegurar_columnas_manual(cargar_csv_excel(archivo))
+            st.session_state["df_resultado"] = agregar_calculos(df_manual)
+            st.success("Archivo cargado y calculado.")
         except Exception as e:
-            st.error(str(e))
+            st.error(f"No pude leer el archivo: {e}")
 
 else:
-    if not info_categoria.get("has_outrights"):
-        st.warning("Esta categoría no figura con mercado outright. Probablemente no tenga cuotas de campeón.")
+    modo_label = "Partidos 1X2" if modo_actual == "h2h" else "Campeón / Outrights"
+    st.info(f"Sport key: {sport_key} | Modo: {modo_label}")
 
-    if st.button("Actualizar cuotas de campeón / ganador", type="primary"):
-        try:
-            eventos = consultar_eventos(api_key, sport_key, "us,uk,eu", "outrights")
-            df_out = eventos_outrights_a_df(eventos)
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        regions = st.multiselect("Regiones", ["us", "uk", "eu", "au"], default=["us", "uk", "eu"])
+    with col2:
+        promediar = st.checkbox("Promediar casas", value=True)
+    with col3:
+        if st.button("Limpiar resultado"):
+            st.session_state["df_resultado"] = pd.DataFrame()
+            st.rerun()
 
-            if df_out.empty:
-                st.warning("La API respondió, pero no encontró cuotas outright para esta categoría.")
-                with st.expander("Ver respuesta cruda"):
-                    st.json(eventos[:3] if isinstance(eventos, list) else eventos)
-            else:
-                resumen = (
-                    df_out.groupby("selección/equipo", as_index=False)
-                    .agg({
-                        "Cuota": "mean",
-                        "Bookmaker": "count"
-                    })
-                    .rename(columns={"Bookmaker": "Bookmakers usados"})
+    if modo_actual == "h2h":
+        if st.button("Actualizar partidos y cuotas", type="primary"):
+            try:
+                eventos = consultar_eventos(api_key, sport_key, ",".join(regions), "h2h")
+                df_partidos = eventos_h2h_a_df(eventos, promediar=promediar)
+
+                if df_partidos.empty:
+                    st.warning("La API respondió, pero no encontró partidos/cuotas h2h para esta categoría.")
+                    with st.expander("Ver respuesta cruda"):
+                        st.json(eventos[:3] if isinstance(eventos, list) else eventos)
+                else:
+                    st.session_state["df_resultado"] = agregar_calculos(df_partidos)
+                    st.success(f"Partidos cargados: {len(st.session_state['df_resultado'])}")
+
+                headers = st.session_state.get("api_headers", {})
+                st.caption(
+                    f"Requests usadas: {headers.get('requests_used')} | "
+                    f"Restantes: {headers.get('requests_remaining')} | "
+                    f"Costo última consulta: {headers.get('requests_last')}"
                 )
-                resumen["Cuota"] = resumen["Cuota"].round(2)
-                resumen["Prob implícita %"] = (100 / resumen["Cuota"]).round(2)
-                resumen = resumen.sort_values("Cuota")
+            except Exception as e:
+                st.error(str(e))
 
-                st.session_state["df_resultado"] = resumen
-                st.session_state["df_outrights_raw"] = df_out
-                st.success(f"Opciones cargadas: {len(resumen)}")
+    else:
+        if st.button("Actualizar cuotas de campeón / ganador", type="primary"):
+            try:
+                eventos = consultar_eventos(api_key, sport_key, ",".join(regions), "outrights")
+                df_out = eventos_outrights_a_df(eventos)
+                if df_out.empty:
+                    st.warning("La API respondió, pero no encontró cuotas outright para esta categoría.")
+                    with st.expander("Ver respuesta cruda"):
+                        st.json(eventos[:3] if isinstance(eventos, list) else eventos)
+                else:
+                    st.session_state["df_outrights_raw"] = df_out
+                    st.session_state["df_resultado"] = preparar_outrights(df_out)
+                    st.success(f"Opciones cargadas: {len(st.session_state['df_resultado'])}")
 
-            headers = st.session_state.get("api_headers", {})
-            st.caption(
-                f"Requests usadas: {headers.get('requests_used')} | "
-                f"Restantes: {headers.get('requests_remaining')} | "
-                f"Costo última consulta: {headers.get('requests_last')}"
-            )
-
-        except Exception as e:
-            st.error(str(e))
+                headers = st.session_state.get("api_headers", {})
+                st.caption(
+                    f"Requests usadas: {headers.get('requests_used')} | "
+                    f"Restantes: {headers.get('requests_remaining')} | "
+                    f"Costo última consulta: {headers.get('requests_last')}"
+                )
+            except Exception as e:
+                st.error(str(e))
 
 st.header("3) Resultado")
 
 df = st.session_state["df_resultado"]
 
 if df.empty:
-    st.info("Todavía no hay resultados. Elegí una categoría y tocá actualizar.")
+    st.info("Todavía no hay resultados. Elegí una competencia y tocá actualizar.")
 else:
-    if modo == "Partidos 1X2 / Ganador":
+    if "local" in df.columns and "visitante" in df.columns:
         colf1, colf2 = st.columns([1, 2])
         with colf1:
             riesgo = st.selectbox("Filtrar riesgo", ["Todos", "Bajo", "Medio", "Alto"])
@@ -470,35 +498,22 @@ else:
         st.subheader("Top picks por confianza")
         ranking = mostrar.dropna(subset=["Confianza %"]).sort_values("Confianza %", ascending=False)
         st.dataframe(ranking[cols].head(20), use_container_width=True)
-
     else:
         st.dataframe(df, use_container_width=True)
-        if "df_outrights_raw" in st.session_state:
-            with st.expander("Ver cuotas crudas por bookmaker"):
-                st.dataframe(st.session_state["df_outrights_raw"], use_container_width=True)
 
 st.header("4) Exportar")
 
 if not df.empty:
     csv = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "Descargar CSV",
-        csv,
-        "prode_odds_resultado.csv",
-        "text/csv"
-    )
+    st.download_button("Descargar CSV", csv, "prode_odds_resultado.csv", "text/csv")
 
     hojas = {"Resultado": df}
-    if "df_outrights_raw" in st.session_state and modo == "Campeón / Outrights":
+    if "df_outrights_raw" in st.session_state and modo_actual == "outrights":
         hojas["Outrights_raw"] = st.session_state["df_outrights_raw"]
 
-    xlsx = excel_bytes(hojas)
     st.download_button(
         "Descargar Excel",
-        xlsx,
+        excel_bytes(hojas),
         "prode_odds_resultado.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
-with st.expander("Ver todas las categorías disponibles"):
-    st.dataframe(df_deportes, use_container_width=True)

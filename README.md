@@ -1,17 +1,16 @@
-# Prode Odds - Multi Categoría
+# Prode Odds con botoncitos
 
-App Streamlit para consultar cuotas desde The Odds API por categoría:
+App Streamlit para consultar cuotas desde The Odds API con accesos rápidos:
+
 - Mundial 2026
-- Copa Libertadores
-- Copa Sudamericana
-- ligas disponibles en la API
-- mercados de campeón/outrights cuando existan
-
-## Archivos
-
-- app.py
-- requirements.txt
-- README.md
+- Campeón Mundial
+- Libertadores
+- Sudamericana
+- Chile Primera
+- Brasil Serie B
+- España Segunda
+- Japón J League
+- Liga Argentina manual por CSV/Excel
 
 ## Secrets
 
@@ -21,7 +20,7 @@ En Streamlit Cloud:
 ODDS_API_KEY = "TU_API_KEY"
 ```
 
-## Main file path
+## Main file
 
 ```text
 app.py
