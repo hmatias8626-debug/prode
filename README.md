@@ -1,8 +1,13 @@
-# Prode Mundial 2026
+# Prode Odds - Multi Categoría
 
-App Streamlit para cargar cruces del Mundial 2026, consultar cuotas desde The Odds API y calcular probabilidades reales para un prode.
+App Streamlit para consultar cuotas desde The Odds API por categoría:
+- Mundial 2026
+- Copa Libertadores
+- Copa Sudamericana
+- ligas disponibles en la API
+- mercados de campeón/outrights cuando existan
 
-## Archivos necesarios
+## Archivos
 
 - app.py
 - requirements.txt
@@ -12,17 +17,11 @@ App Streamlit para cargar cruces del Mundial 2026, consultar cuotas desde The Od
 
 En Streamlit Cloud:
 
-Settings → Secrets
-
-Pegar:
-
 ```toml
 ODDS_API_KEY = "TU_API_KEY"
 ```
 
-No subas tu API key real a GitHub.
-
-## Main file
+## Main file path
 
 ```text
 app.py
