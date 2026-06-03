@@ -131,3 +131,13 @@ Agregado:
 - No consume requests.
 - Usa `df_resultado` cargado desde Supabase o actualizado manualmente.
 - Muestra fecha/hora Argentina, liga, equipos, cuotas y pronóstico si existen.
+
+
+## v8 Live highlights + countdown
+
+Agregado:
+- Bloque superior `🔴 Live & countdown`.
+- Detecta partidos en vivo según columna `estado`.
+- Muestra el próximo partido futuro con cuenta regresiva.
+- Lista partidos que empiezan dentro de 24 horas.
+- No consume requests: usa datos ya cargados en `df_resultado`.
