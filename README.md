@@ -49,3 +49,20 @@ SUPABASE_ANON_KEY = "tu_anon_key"
 ```
 
 También podés usar `SUPABASE_SERVICE_KEY`, pero para una app pública conviene usar anon key con políticas adecuadas.
+
+
+## Odds-API.io corregido
+
+Usa el flujo correcto:
+- `/events?apiKey=...&sport=football&league=...&limit=...`
+- `/odds?apiKey=...&eventId=...&bookmakers=Bet365,Unibet,SingBet`
+
+Secret recomendado:
+
+```toml
+ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
+```
+
+Para probar Argentina:
+- `argentina-liga-profesional`
+- o dejar vacío el league slug para ver eventos de fútbol disponibles.

@@ -836,6 +836,172 @@ def excel_bytes(df_dict):
     return output.getvalue()
 
 
+
+def odds_api_io_events(league_slug="", limit=20, force_api=False):
+    cache_key = f"odds_api_io_events::football::{league_slug}::{limit}"
+
+    def fetch():
+        params = {
+            "apiKey": get_odds_api_io_key(),
+            "sport": "football",
+            "limit": int(limit),
+        }
+        if league_slug:
+            params["league"] = league_slug
+        return odds_api_io_get("/events", params=params, timeout=30)
+
+    data, source = get_or_fetch_cache(
+        cache_key,
+        CACHE_TTL_HOURS["odds_api_io"],
+        fetch_fn=fetch,
+        force=force_api
+    )
+    return data
+
+
+def odds_api_io_event_odds(event_id, bookmakers, force_api=False):
+    cache_key = f"odds_api_io_odds::{event_id}::{bookmakers}"
+
+    def fetch():
+        params = {
+            "apiKey": get_odds_api_io_key(),
+            "eventId": event_id,
+            "bookmakers": bookmakers,
+        }
+        return odds_api_io_get("/odds", params=params, timeout=30)
+
+    data, source = get_or_fetch_cache(
+        cache_key,
+        CACHE_TTL_HOURS["odds_api_io"],
+        fetch_fn=fetch,
+        force=force_api
+    )
+    return data
+
+
+def parse_odds_api_io_events(data):
+    eventos = extraer_lista_eventos_odds_api_io(data)
+    filas = []
+    for ev in eventos:
+        if not isinstance(ev, dict):
+            continue
+        sport = ev.get("sport") or {}
+        league = ev.get("league") or {}
+        filas.append({
+            "event_id": ev.get("id"),
+            "sport": sport.get("name") if isinstance(sport, dict) else sport,
+            "sport_slug": sport.get("slug") if isinstance(sport, dict) else None,
+            "league": league.get("name") if isinstance(league, dict) else league,
+            "league_slug": league.get("slug") if isinstance(league, dict) else None,
+            "fecha_api": ev.get("date"),
+            "local": ev.get("home"),
+            "visitante": ev.get("away"),
+            "estado": ev.get("status"),
+        })
+    return pd.DataFrame(filas)
+
+
+def parse_odds_api_io_odds_response(data):
+    if not isinstance(data, dict):
+        return None
+
+    local = data.get("home")
+    visitante = data.get("away")
+    fecha = data.get("date")
+    event_id = data.get("id")
+
+    bookmakers = data.get("bookmakers") or {}
+    cuotas_local, cuotas_empate, cuotas_visitante, casas = [], [], [], []
+
+    if isinstance(bookmakers, dict):
+        iterable = bookmakers.items()
+    else:
+        iterable = []
+
+    for casa, markets in iterable:
+        if not isinstance(markets, list):
+            continue
+        for market in markets:
+            if not isinstance(market, dict):
+                continue
+            name = str(market.get("name", "")).upper()
+            if name not in ["ML", "1X2", "MATCH WINNER", "MONEYLINE"]:
+                continue
+            odds_list = market.get("odds") or []
+            if not odds_list:
+                continue
+            odds = odds_list[0]
+            try:
+                home = odds.get("home")
+                draw = odds.get("draw")
+                away = odds.get("away")
+                if home is not None and away is not None:
+                    cuotas_local.append(float(home))
+                    cuotas_visitante.append(float(away))
+                    if draw is not None:
+                        cuotas_empate.append(float(draw))
+                    casas.append(casa)
+            except Exception:
+                pass
+
+    if not cuotas_local:
+        return None
+
+    return {
+        "event_id": event_id,
+        "fecha_api": fecha,
+        "local": local,
+        "visitante": visitante,
+        "Cuota local": round(sum(cuotas_local) / len(cuotas_local), 2),
+        "Cuota empate": round(sum(cuotas_empate) / len(cuotas_empate), 2) if cuotas_empate else None,
+        "Cuota visitante": round(sum(cuotas_visitante) / len(cuotas_visitante), 2),
+        "Bookmaker": "Promedio Odds-API.io" if len(casas) > 1 else casas[0],
+        "Bookmakers usados": len(casas),
+    }
+
+
+def cargar_cuotas_odds_api_io_por_eventos(league_slug="", limit=20, bookmakers="Bet365,Unibet,SingBet", force_api=False):
+    eventos_raw = odds_api_io_events(league_slug=league_slug, limit=limit, force_api=force_api)
+    df_eventos = parse_odds_api_io_events(eventos_raw)
+
+    if df_eventos.empty:
+        return pd.DataFrame(), df_eventos, eventos_raw
+
+    filas = []
+    for _, ev in df_eventos.iterrows():
+        event_id = ev.get("event_id")
+        if not event_id:
+            continue
+        try:
+            raw_odds = odds_api_io_event_odds(event_id, bookmakers, force_api=force_api)
+            parsed = parse_odds_api_io_odds_response(raw_odds)
+            if parsed:
+                parsed["local"] = parsed.get("local") or ev.get("local")
+                parsed["visitante"] = parsed.get("visitante") or ev.get("visitante")
+                parsed["fecha_api"] = parsed.get("fecha_api") or ev.get("fecha_api")
+                parsed["league"] = ev.get("league")
+                parsed["league_slug"] = ev.get("league_slug")
+                filas.append(parsed)
+        except Exception:
+            pass
+
+    return pd.DataFrame(filas), df_eventos, eventos_raw
+
+
+def forzar_consistencia_pronostico(df):
+    if df.empty or "Recomendación" not in df.columns:
+        return df
+    df = df.copy()
+    for idx, row in df.iterrows():
+        marcador = str(row.get("Resultado probable", ""))
+        if marcador in ["0-0", "1-1", "2-2"]:
+            df.at[idx, "Recomendación"] = "Empate"
+            df.at[idx, "Para prode"] = "Empate"
+            if pd.notna(row.get("Prob empate %")):
+                df.at[idx, "Confianza %"] = row.get("Prob empate %")
+    return df
+
+
 st.title("⚽ Prode Odds")
 st.caption("Botoncitos rápidos + The Odds API + Liga Argentina real con API-Football.")
 
@@ -1047,7 +1213,7 @@ if modo_actual == "api_football_argentina":
                         if df_fix.empty:
                             st.warning("API-Football respondió, pero no devolvió partidos para esos filtros.")
                         else:
-                            st.session_state["df_resultado"] = agregar_calculos(df_fix)
+                            st.session_state["df_resultado"] = forzar_consistencia_pronostico(agregar_calculos(df_fix))
                             st.success(f"Partidos cargados: {len(df_fix)}")
 
                         headers = st.session_state.get("api_football_headers", {})
@@ -1061,51 +1227,58 @@ if modo_actual == "api_football_argentina":
             if not odds_api_io_key:
                 st.warning("Para buscar cuotas en Odds-API.io cargá ODDS_API_IO_KEY en Secrets.")
             else:
-                col_o1, col_o2 = st.columns([1, 2])
+                col_o1, col_o2, col_o3 = st.columns([1, 1, 2])
                 with col_o1:
-                    force_api_io = st.checkbox("Forzar Odds-API.io", value=False, help="Si está desmarcado usa Supabase si hay cache vigente.")
-                    if st.button("Buscar cuotas Odds-API.io"):
-                        try:
-                            endpoint, raw, errores = odds_api_io_try_common_endpoints(force_api=force_api_io)
-
-                            if raw is None:
-                                st.error("No pude encontrar un endpoint válido de Odds-API.io con rutas comunes.")
-                                with st.expander("Errores probados"):
-                                    st.dataframe(pd.DataFrame(errores), use_container_width=True)
-                            else:
-                                st.session_state["odds_api_io_raw"] = raw
-                                st.success(f"Odds-API.io respondió usando endpoint: {endpoint}")
-
-                                df_odds_io = parsear_eventos_odds_api_io_a_h2h(raw)
-                                st.session_state["df_odds_api_io"] = df_odds_io
-
-                                if df_odds_io.empty:
-                                    st.warning("La API respondió, pero todavía no pude convertir la respuesta a partidos 1X2. Mirá la respuesta cruda abajo.")
-                                else:
-                                    if not st.session_state["df_resultado"].empty:
-                                        cruzado = intentar_cruzar_cuotas_argentina_con_odds_api_io(
-                                            st.session_state["df_resultado"],
-                                            df_odds_io
-                                        )
-                                        st.session_state["df_resultado"] = agregar_calculos(cruzado)
-                                        st.success("Cuotas cruzadas contra el fixture actual.")
-                                    else:
-                                        st.session_state["df_resultado"] = agregar_calculos(df_odds_io)
-                                        st.success("Cuotas cargadas desde Odds-API.io.")
-
-                        except Exception as e:
-                            st.error(str(e))
-
+                    league_slug_io = st.text_input("League slug Odds-API.io", value="argentina-liga-profesional", help="Si no encuentra, probá vacío para traer eventos de fútbol generales.")
                 with col_o2:
-                    st.caption("Si no cruza automático, es porque Odds-API.io usa nombres distintos o endpoint distinto. Dejé la respuesta cruda para ajustar fino sin adivinar, porque claro, cada API decide inventar su propio idioma.")
+                    limit_io = st.slider("Eventos Odds-API.io", 5, 50, 20, 5)
+                with col_o3:
+                    bookmakers_io = st.text_input("Bookmakers", value="Bet365,Unibet,SingBet")
+
+                force_api_io = st.checkbox("Forzar Odds-API.io", value=False, help="Si está desmarcado usa Supabase si hay cache vigente.")
+
+                if st.button("Buscar cuotas Odds-API.io"):
+                    try:
+                        df_odds_io, df_events_io, raw_events_io = cargar_cuotas_odds_api_io_por_eventos(
+                            league_slug=league_slug_io,
+                            limit=limit_io,
+                            bookmakers=bookmakers_io,
+                            force_api=force_api_io
+                        )
+
+                        st.session_state["odds_api_io_events"] = df_events_io
+                        st.session_state["odds_api_io_raw_events"] = raw_events_io
+
+                        if df_odds_io.empty:
+                            st.warning("Odds-API.io trajo eventos, pero no encontré cuotas ML/1X2 para los bookmakers elegidos.")
+                        else:
+                            st.session_state["df_odds_api_io"] = df_odds_io
+
+                            if not st.session_state["df_resultado"].empty:
+                                cruzado = intentar_cruzar_cuotas_argentina_con_odds_api_io(
+                                    st.session_state["df_resultado"],
+                                    df_odds_io
+                                )
+                                st.session_state["df_resultado"] = forzar_consistencia_pronostico(agregar_calculos(cruzado))
+                                st.success("Cuotas cruzadas contra el fixture actual.")
+                            else:
+                                st.session_state["df_resultado"] = forzar_consistencia_pronostico(agregar_calculos(df_odds_io))
+                                st.success("Cuotas cargadas desde Odds-API.io.")
+
+                    except Exception as e:
+                        st.error(str(e))
+
+                if "odds_api_io_events" in st.session_state:
+                    with st.expander("Ver eventos detectados desde Odds-API.io"):
+                        st.dataframe(st.session_state["odds_api_io_events"], use_container_width=True)
 
                 if "df_odds_api_io" in st.session_state:
-                    with st.expander("Ver partidos/cuotas detectados desde Odds-API.io"):
+                    with st.expander("Ver cuotas detectadas desde Odds-API.io"):
                         st.dataframe(st.session_state["df_odds_api_io"], use_container_width=True)
 
-                if "odds_api_io_raw" in st.session_state:
-                    with st.expander("Ver respuesta cruda Odds-API.io"):
-                        st.json(st.session_state["odds_api_io_raw"])
+                if "odds_api_io_raw_events" in st.session_state:
+                    with st.expander("Ver respuesta cruda eventos Odds-API.io"):
+                        st.json(st.session_state["odds_api_io_raw_events"])
 
             with st.expander("Ver ligas argentinas detectadas por API-Football"):
                 st.dataframe(df_ligas_arg, use_container_width=True)
@@ -1139,7 +1312,7 @@ else:
                         with st.expander("Ver respuesta cruda"):
                             st.json(eventos[:3] if isinstance(eventos, list) else eventos)
                     else:
-                        st.session_state["df_resultado"] = agregar_calculos(df_partidos)
+                        st.session_state["df_resultado"] = forzar_consistencia_pronostico(agregar_calculos(df_partidos))
                         st.success(f"Partidos cargados: {len(st.session_state['df_resultado'])}")
 
                     headers = st.session_state.get("odds_headers", {})
@@ -1198,7 +1371,7 @@ else:
         )
 
         if st.button("Recalcular probabilidades"):
-            st.session_state["df_resultado"] = agregar_calculos(edited)
+            st.session_state["df_resultado"] = forzar_consistencia_pronostico(agregar_calculos(edited))
             st.success("Probabilidades recalculadas.")
             st.rerun()
 
