@@ -1113,6 +1113,39 @@ def cargar_cuotas_odds_api_io_con_status(league_slug="", limit=20, bookmakers="B
 
     return pd.DataFrame(filas), df_eventos, eventos_raw
 
+
+def cargar_proximo_evento_futbol_odds_api_io(bookmakers="Bet365,Unibet,SingBet", force_api=False):
+    """
+    Prueba rápida: trae el próximo evento de football disponible en Odds-API.io
+    y busca cuotas ML/1X2 para ese evento.
+    """
+    eventos_raw = odds_api_io_events(league_slug="", limit=1, force_api=force_api)
+    df_eventos = parse_odds_api_io_events(eventos_raw)
+
+    if df_eventos.empty:
+        return pd.DataFrame(), df_eventos, eventos_raw, None
+
+    ev = df_eventos.iloc[0]
+    event_id = ev.get("event_id")
+
+    if not event_id:
+        return pd.DataFrame(), df_eventos, eventos_raw, None
+
+    raw_odds = odds_api_io_event_odds(event_id, bookmakers, force_api=force_api)
+    parsed = parse_odds_api_io_odds_response(raw_odds)
+
+    if not parsed:
+        return pd.DataFrame(), df_eventos, eventos_raw, raw_odds
+
+    parsed["local"] = parsed.get("local") or ev.get("local")
+    parsed["visitante"] = parsed.get("visitante") or ev.get("visitante")
+    parsed["fecha_api"] = parsed.get("fecha_api") or ev.get("fecha_api")
+    parsed["league"] = ev.get("league")
+    parsed["league_slug"] = ev.get("league_slug")
+    parsed["estado"] = ev.get("estado")
+
+    return pd.DataFrame([parsed]), df_eventos, eventos_raw, raw_odds
+
 st.title("⚽ Prode Odds")
 st.caption("Botoncitos rápidos + The Odds API + Liga Argentina real con API-Football.")
 
@@ -1338,6 +1371,52 @@ if modo_actual == "api_football_argentina":
             if not odds_api_io_key:
                 st.warning("Para buscar cuotas en Odds-API.io cargá ODDS_API_IO_KEY en Secrets.")
             else:
+                st.markdown("#### Prueba rápida")
+
+                col_p1, col_p2 = st.columns([1, 2])
+                with col_p1:
+                    force_next_event = st.checkbox(
+                        "Forzar próximo evento",
+                        value=False,
+                        help="Si está desmarcado usa Supabase si ya se guardó."
+                    )
+                with col_p2:
+                    next_bookmakers = st.text_input(
+                        "Bookmakers para prueba rápida",
+                        value="Bet365,Unibet,SingBet",
+                        key="next_bookmakers"
+                    )
+
+                if st.button("⚡ Probar próximo evento de fútbol"):
+                    try:
+                        df_next, df_next_events, raw_next_events, raw_next_odds = cargar_proximo_evento_futbol_odds_api_io(
+                            bookmakers=next_bookmakers,
+                            force_api=force_next_event
+                        )
+
+                        st.session_state["next_event_events"] = df_next_events
+                        st.session_state["next_event_raw_events"] = raw_next_events
+                        st.session_state["next_event_raw_odds"] = raw_next_odds
+
+                        if df_next_events.empty:
+                            st.warning("Odds-API.io no devolvió eventos próximos de fútbol.")
+                        elif df_next.empty:
+                            st.warning("Encontré el próximo evento, pero no encontré cuotas ML/1X2 para esos bookmakers.")
+                            st.dataframe(df_next_events, use_container_width=True)
+                        else:
+                            st.session_state["df_resultado"] = forzar_consistencia_pronostico(agregar_calculos(df_next))
+                            st.success("Prueba cargada: próximo evento + cuotas.")
+                    except Exception as e:
+                        st.error(str(e))
+
+                if "next_event_events" in st.session_state:
+                    with st.expander("Ver próximo evento detectado"):
+                        st.dataframe(st.session_state["next_event_events"], use_container_width=True)
+
+                if "next_event_raw_odds" in st.session_state and st.session_state["next_event_raw_odds"] is not None:
+                    with st.expander("Ver respuesta cruda cuotas próximo evento"):
+                        st.json(st.session_state["next_event_raw_odds"])
+
                 st.markdown("#### A) Descubrir ligas disponibles en Odds-API.io")
 
                 col_d1, col_d2, col_d3 = st.columns([1, 1, 2])

@@ -79,3 +79,14 @@ La app ahora permite:
 Recomendado:
 - Status: `pending`
 - Buscar liga: `argentina`, `libertadores`, `sudamericana`, etc.
+
+
+## v4 Próximo evento
+
+Agregado botón:
+- `⚡ Probar próximo evento de fútbol`
+
+Flujo:
+1. `/events?apiKey=...&sport=football&limit=1`
+2. `/odds?apiKey=...&eventId=...&bookmakers=...`
+3. Calcula probabilidades y muestra resultado.
