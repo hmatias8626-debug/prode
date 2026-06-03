@@ -1002,6 +1002,117 @@ def forzar_consistencia_pronostico(df):
     return df
 
 
+
+def odds_api_io_discover_leagues(limit=200, status_filter="pending", force_api=False):
+    """
+    Trae eventos de football y arma una tabla única de ligas disponibles en Odds-API.io.
+    Sirve para descubrir el league_slug real sin adivinar.
+    """
+    cache_key = f"odds_api_io_leagues::football::{status_filter}::{limit}"
+
+    def fetch():
+        params = {
+            "apiKey": get_odds_api_io_key(),
+            "sport": "football",
+            "limit": int(limit),
+        }
+        if status_filter:
+            params["status"] = status_filter
+        return odds_api_io_get("/events", params=params, timeout=30)
+
+    data, source = get_or_fetch_cache(
+        cache_key,
+        CACHE_TTL_HOURS["odds_api_io"],
+        fetch_fn=fetch,
+        force=force_api
+    )
+
+    df_events = parse_odds_api_io_events(data)
+    if df_events.empty:
+        return pd.DataFrame(), df_events, data
+
+    df_leagues = (
+        df_events[["league", "league_slug"]]
+        .dropna()
+        .drop_duplicates()
+        .sort_values(["league", "league_slug"])
+        .reset_index(drop=True)
+    )
+
+    # Conteo de eventos por liga
+    counts = (
+        df_events.groupby(["league", "league_slug"], as_index=False)
+        .size()
+        .rename(columns={"size": "eventos_detectados"})
+    )
+
+    df_leagues = df_leagues.merge(counts, on=["league", "league_slug"], how="left")
+    return df_leagues, df_events, data
+
+
+def filtrar_ligas_por_texto(df, texto):
+    if df.empty or not texto:
+        return df
+    t = str(texto).lower().strip()
+    return df[
+        df["league"].astype(str).str.lower().str.contains(t, na=False)
+        | df["league_slug"].astype(str).str.lower().str.contains(t, na=False)
+    ]
+
+
+def cargar_cuotas_odds_api_io_con_status(league_slug="", limit=20, bookmakers="Bet365,Unibet,SingBet", status_filter="pending", force_api=False):
+    """
+    Igual que cargar_cuotas_odds_api_io_por_eventos, pero soporta status=pending
+    para no traer partidos ya resueltos.
+    """
+    cache_key = f"odds_api_io_events::football::{league_slug}::{status_filter}::{limit}"
+
+    def fetch_events():
+        params = {
+            "apiKey": get_odds_api_io_key(),
+            "sport": "football",
+            "limit": int(limit),
+        }
+        if league_slug:
+            params["league"] = league_slug
+        if status_filter:
+            params["status"] = status_filter
+        return odds_api_io_get("/events", params=params, timeout=30)
+
+    eventos_raw, source = get_or_fetch_cache(
+        cache_key,
+        CACHE_TTL_HOURS["odds_api_io"],
+        fetch_fn=fetch_events,
+        force=force_api
+    )
+
+    df_eventos = parse_odds_api_io_events(eventos_raw)
+
+    if df_eventos.empty:
+        return pd.DataFrame(), df_eventos, eventos_raw
+
+    filas = []
+    for _, ev in df_eventos.iterrows():
+        event_id = ev.get("event_id")
+        if not event_id:
+            continue
+
+        try:
+            raw_odds = odds_api_io_event_odds(event_id, bookmakers, force_api=force_api)
+            parsed = parse_odds_api_io_odds_response(raw_odds)
+            if parsed:
+                parsed["local"] = parsed.get("local") or ev.get("local")
+                parsed["visitante"] = parsed.get("visitante") or ev.get("visitante")
+                parsed["fecha_api"] = parsed.get("fecha_api") or ev.get("fecha_api")
+                parsed["league"] = ev.get("league")
+                parsed["league_slug"] = ev.get("league_slug")
+                parsed["estado"] = ev.get("estado")
+                filas.append(parsed)
+        except Exception:
+            pass
+
+    return pd.DataFrame(filas), df_eventos, eventos_raw
+
 st.title("⚽ Prode Odds")
 st.caption("Botoncitos rápidos + The Odds API + Liga Argentina real con API-Football.")
 
@@ -1227,29 +1338,104 @@ if modo_actual == "api_football_argentina":
             if not odds_api_io_key:
                 st.warning("Para buscar cuotas en Odds-API.io cargá ODDS_API_IO_KEY en Secrets.")
             else:
+                st.markdown("#### A) Descubrir ligas disponibles en Odds-API.io")
+
+                col_d1, col_d2, col_d3 = st.columns([1, 1, 2])
+                with col_d1:
+                    discover_status = st.selectbox(
+                        "Estado eventos",
+                        ["pending", "live", "settled", ""],
+                        index=0,
+                        help="pending = próximos partidos. Vacío = todos."
+                    )
+                with col_d2:
+                    discover_limit = st.slider("Eventos para analizar", 50, 500, 200, 50)
+                with col_d3:
+                    buscar_liga = st.text_input("Buscar liga", value="argentina", help="Ej: argentina, libertadores, sudamericana, premier")
+
+                force_discover = st.checkbox(
+                    "Forzar búsqueda de ligas Odds-API.io",
+                    value=False,
+                    help="Si está desmarcado usa Supabase si hay cache vigente."
+                )
+
+                if st.button("🔍 Buscar ligas disponibles en Odds-API.io"):
+                    try:
+                        df_leagues, df_events, raw_events = odds_api_io_discover_leagues(
+                            limit=discover_limit,
+                            status_filter=discover_status,
+                            force_api=force_discover
+                        )
+
+                        st.session_state["odds_api_io_leagues"] = df_leagues
+                        st.session_state["odds_api_io_events_discovery"] = df_events
+                        st.session_state["odds_api_io_raw_discovery"] = raw_events
+
+                        if df_leagues.empty:
+                            st.warning("Odds-API.io respondió, pero no encontré ligas en los eventos devueltos.")
+                        else:
+                            st.success(f"Ligas detectadas: {len(df_leagues)}")
+
+                    except Exception as e:
+                        st.error(str(e))
+
+                if "odds_api_io_leagues" in st.session_state:
+                    ligas_mostrar = filtrar_ligas_por_texto(st.session_state["odds_api_io_leagues"], buscar_liga)
+
+                    with st.expander("Ver ligas detectadas desde Odds-API.io", expanded=True):
+                        st.dataframe(ligas_mostrar, use_container_width=True)
+
+                    if not ligas_mostrar.empty:
+                        opciones_ligas_io = {
+                            f"{row['league']} — {row['league_slug']} — eventos: {row['eventos_detectados']}": row["league_slug"]
+                            for _, row in ligas_mostrar.iterrows()
+                        }
+
+                        liga_io_label = st.selectbox("Usar esta liga Odds-API.io", list(opciones_ligas_io.keys()))
+                        if st.button("Usar slug seleccionado"):
+                            st.session_state["odds_api_io_selected_slug"] = opciones_ligas_io[liga_io_label]
+                            st.success(f"Slug seleccionado: {st.session_state['odds_api_io_selected_slug']}")
+
+                st.markdown("#### B) Buscar cuotas para una liga")
+
+                slug_default = st.session_state.get("odds_api_io_selected_slug", "argentina-liga-profesional")
+
                 col_o1, col_o2, col_o3 = st.columns([1, 1, 2])
                 with col_o1:
-                    league_slug_io = st.text_input("League slug Odds-API.io", value="argentina-liga-profesional", help="Si no encuentra, probá vacío para traer eventos de fútbol generales.")
+                    league_slug_io = st.text_input(
+                        "League slug Odds-API.io",
+                        value=slug_default,
+                        help="Podés elegirlo desde el descubridor de ligas o dejarlo vacío para fútbol general."
+                    )
                 with col_o2:
                     limit_io = st.slider("Eventos Odds-API.io", 5, 50, 20, 5)
                 with col_o3:
                     bookmakers_io = st.text_input("Bookmakers", value="Bet365,Unibet,SingBet")
 
+                col_o4, col_o5 = st.columns([1, 2])
+                with col_o4:
+                    status_io = st.selectbox("Status", ["pending", "live", "settled", ""], index=0)
+                with col_o5:
+                    st.caption("pending evita traer partidos ya jugados. Si no encuentra cuotas, probá otros bookmakers o dejá el slug vacío para verificar cobertura.")
+
                 force_api_io = st.checkbox("Forzar Odds-API.io", value=False, help="Si está desmarcado usa Supabase si hay cache vigente.")
 
                 if st.button("Buscar cuotas Odds-API.io"):
                     try:
-                        df_odds_io, df_events_io, raw_events_io = cargar_cuotas_odds_api_io_por_eventos(
+                        df_odds_io, df_events_io, raw_events_io = cargar_cuotas_odds_api_io_con_status(
                             league_slug=league_slug_io,
                             limit=limit_io,
                             bookmakers=bookmakers_io,
+                            status_filter=status_io,
                             force_api=force_api_io
                         )
 
                         st.session_state["odds_api_io_events"] = df_events_io
                         st.session_state["odds_api_io_raw_events"] = raw_events_io
 
-                        if df_odds_io.empty:
+                        if df_events_io.empty:
+                            st.warning("Odds-API.io no devolvió eventos para ese slug/status.")
+                        elif df_odds_io.empty:
                             st.warning("Odds-API.io trajo eventos, pero no encontré cuotas ML/1X2 para los bookmakers elegidos.")
                         else:
                             st.session_state["df_odds_api_io"] = df_odds_io
@@ -1279,6 +1465,10 @@ if modo_actual == "api_football_argentina":
                 if "odds_api_io_raw_events" in st.session_state:
                     with st.expander("Ver respuesta cruda eventos Odds-API.io"):
                         st.json(st.session_state["odds_api_io_raw_events"])
+
+                if "odds_api_io_events_discovery" in st.session_state:
+                    with st.expander("Ver eventos usados para descubrir ligas"):
+                        st.dataframe(st.session_state["odds_api_io_events_discovery"], use_container_width=True)
 
             with st.expander("Ver ligas argentinas detectadas por API-Football"):
                 st.dataframe(df_ligas_arg, use_container_width=True)

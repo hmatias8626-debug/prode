@@ -66,3 +66,16 @@ ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
 Para probar Argentina:
 - `argentina-liga-profesional`
 - o dejar vacío el league slug para ver eventos de fútbol disponibles.
+
+
+## Odds-API.io v3: descubridor de ligas
+
+La app ahora permite:
+1. Buscar eventos de fútbol en Odds-API.io.
+2. Extraer automáticamente `league.name` y `league.slug`.
+3. Seleccionar el slug correcto.
+4. Consultar cuotas con `/odds` por `eventId`.
+
+Recomendado:
+- Status: `pending`
+- Buscar liga: `argentina`, `libertadores`, `sudamericana`, etc.
